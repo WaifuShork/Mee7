@@ -25,5 +25,16 @@ public class AlphaConfig
         return null;
     }
 
-    public string Token { get; init; } = string.Empty;
+    public async void RefreshAsync()
+    {
+        var config = await LoadAsync();
+        if (config is null)
+        {
+            return;
+        }
+        
+        Token = config.Token;
+    }
+
+    public string Token { get; set; } = string.Empty;
 }
