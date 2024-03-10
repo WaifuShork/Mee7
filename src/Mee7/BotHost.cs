@@ -83,6 +83,7 @@ public static class BotHost
                         AlwaysDownloadUsers = true,
                         MessageCacheSize = 200,
                         GatewayIntents = GatewayIntents.All,
+                        LogGatewayIntentWarnings = false,
                     };
                     
                     config.Token = alphaConfig.Token;
