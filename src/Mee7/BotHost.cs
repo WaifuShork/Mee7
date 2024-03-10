@@ -95,6 +95,8 @@ public static class BotHost
                 services.AddInteractionService((config, _) =>
                 {
                     config.DefaultRunMode = Discord.Interactions.RunMode.Async;
+                    config.UseCompiledLambda = true;
+                    config.EnableAutocompleteHandlers = true;
                 });
                 
                 services.AddSingleton(alphaConfig);
