@@ -1,13 +1,13 @@
-﻿using Discord;
-using Serilog;
-using Discord.Net;
+﻿using Serilog;
 using Serilog.Events;
+
+using Discord;
+using Discord.Net;
 using Discord.WebSocket;
 using Discord.Addons.Hosting;
-using Discord.Interactions;
+
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
-using RunMode = Discord.Commands.RunMode;
 
 namespace Mee7;
 
@@ -22,60 +22,65 @@ public static class BotHost
         {
             Directory.CreateDirectory("logs");
         }
+        
+        Log.Information("Starting Mee7 v{MediumVersion} with Discord.NET v{DiscordVersion}", Version.MediumVersion, Version.DiscordVersion);
+            
+        var alphaConfig = await AlphaConfig.LoadAsync();
+        if (alphaConfig is null)
+        {
+            Log.Error("Config file was null, unable to start bot");
+            return 1;
+        }
+        
+        var host = CreateHostBuilder(args, path, alphaConfig).Build();
 
-        // NOTE:
-        // - I'm gonna create a custom sink for the logger at a later date, don't worry about log formatting.
-        //   Any time you want to output something to the console you can just call `Log.Error/Information/Etc("My Message")`
-        //   Everything is already setup
-        
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .MinimumLevel.Override("Microsoft", LogEventLevel.Error)
-            .WriteTo.Async(x =>
-            {
-                x.Console();
-                x.RollingFile(path, flushToDiskInterval: TimeSpan.FromHours(24));
-            })
-            .CreateLogger();
-        
         // Try catch so we can monitor when something goes wonky, will probably end up using something like Docker to host anyways
         try
         {
-            Log.Information("Starting Mee7 v{MediumVersion} with Discord.NET v{DiscordVersion}", Version.MediumVersion, Version.DiscordVersion);
-            
-            var alphaConfig = await AlphaConfig.LoadAsync();
-            if (alphaConfig is null)
-            {
-                Log.Error("Config file was null, unable to start bot");
-                return 1;
-            }
-            
-            await CreateHostBuilder(args, alphaConfig).Build().RunAsync();
+            await host.RunAsync();
             return 0;
         }
-        catch (WebSocketClosedException webSocketClosedException) // Likely due to intents issues...
+        catch (Exception e) // This shit happens when Ctrl+C the app sometimes...
         {
             // NOTE:
             // - This exception likely occurred due to a lack of permissions (intents) with the bot token you're using.
             //   Check the Discord Developer Portal and ensure your intents match our configs.
-            Log.Error("{0}", webSocketClosedException);
+            if (e is WebSocketClosedException webSocketClosedException)
+            {
+                Log.Error("{0}", webSocketClosedException);
+            }
+
             return 1;
         }
         finally
         {
+            host.Dispose();
             await Log.CloseAndFlushAsync();
         }
     }
 
     // Info specifically on Dependency Injection - https://discordnet.dev/guides/dependency_injection/basics.html
-    private static IHostBuilder CreateHostBuilder(string[] args, AlphaConfig alphaConfig)
+    private static IHostBuilder CreateHostBuilder(string[] args, string logPath, AlphaConfig alphaConfig)
     {
         return Host.CreateDefaultBuilder(args)
-            .UseSerilog()
+            // NOTE:
+            // - I'm gonna create a custom sink for the logger at a later date, don't worry about log formatting.
+            //   Any time you want to output something to the console you can just call `Log.Error/Information/Etc("My Message")`
+            //   Everything is already setup
+            .UseSerilog(new LoggerConfiguration()
+                .MinimumLevel.Information()
+                .MinimumLevel.Override("Microsoft", LogEventLevel.Error)
+                .WriteTo.Async(x =>
+                {
+                    x.Console();
+                    x.RollingFile(logPath, flushToDiskInterval: TimeSpan.FromHours(24));
+                })
+                .CreateLogger()
+            )
             .ConfigureServices((_, services) =>
             {
                 // Sharding the bot allows it to run on multiple servers without issues 
-                services.AddDiscordShardedHost((config, provider) =>
+                services.AddDiscordShardedHost((config, _) =>
                 {
                     config.SocketConfig = new DiscordSocketConfig
                     {
@@ -83,18 +88,17 @@ public static class BotHost
                         AlwaysDownloadUsers = true,
                         MessageCacheSize = 200,
                         GatewayIntents = GatewayIntents.All,
+                        LogGatewayIntentWarnings = false,
                     };
                     
                     config.Token = alphaConfig.Token;
                 });
-                services.AddCommandService((config, _) =>
-                {
-                    config.DefaultRunMode = RunMode.Async;
-                    config.CaseSensitiveCommands = false;
-                });
+                
                 services.AddInteractionService((config, _) =>
                 {
                     config.DefaultRunMode = Discord.Interactions.RunMode.Async;
+                    config.UseCompiledLambda = true;
+                    config.EnableAutocompleteHandlers = true;
                 });
                 
                 services.AddSingleton(alphaConfig);
